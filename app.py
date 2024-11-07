@@ -3,7 +3,7 @@ import streamlit as st
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 from question_generation.pipelines import pipeline
 
-device = torch.device('cuda')
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 tokenizer = None
 model = None
 question_generator = None
