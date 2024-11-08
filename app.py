@@ -1,25 +1,25 @@
 import torch
 import streamlit as st
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
-from question_generation.pipelines import pipeline
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 
+# Set device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-tokenizer = None
-model = None
-question_generator = None
 
-# Load models and tokenizer
+@st.cache_resource
 def load_models():
-    global tokenizer, model, question_generator
-    tokenizer = AutoTokenizer.from_pretrained("t5-small")
-    model = AutoModelForSeq2SeqLM.from_pretrained("t5-small").to(device)
-    question_generator = pipeline("question-generation")
+    # Load the BART model for summarization
+    summarizer_tokenizer = AutoTokenizer.from_pretrained("facebook/bart-large-cnn")
+    summarizer_model = AutoModelForSeq2SeqLM.from_pretrained("facebook/bart-large-cnn").to(device)
+    
+    # Load a DistilBERT model for question-answering
+    question_answering = pipeline("question-answering", model="distilbert-base-cased-distilled-squad")
+    
+    return summarizer_tokenizer, summarizer_model, question_answering
 
 # Summarize text
-def get_summary(text):
-    text = "summarize: " + text
-    tokenized_text = tokenizer.encode(text, return_tensors="pt").to(device)
-    summary_ids = model.generate(tokenized_text, num_beams=4, no_repeat_ngram_size=2, min_length=30, max_length=100, early_stopping=True)
+def get_summary(text, tokenizer, model):
+    inputs = tokenizer("summarize: " + text, return_tensors="pt", max_length=1024, truncation=True).to(device)
+    summary_ids = model.generate(inputs['input_ids'], num_beams=4, no_repeat_ngram_size=2, min_length=30, max_length=100, early_stopping=True)
     output = tokenizer.decode(summary_ids[0], skip_special_tokens=True)
     return output
 
@@ -36,20 +36,21 @@ def capitalize_text(source):
     return output
 
 # Translate text
-def translate_text(text, option):
-    text = "translate English to " + option + ": " + text
-    tokenized_text = tokenizer.encode(text, return_tensors="pt").to(device)
-    summary_ids = model.generate(tokenized_text, num_beams=4, no_repeat_ngram_size=2, min_length=30, max_length=100, early_stopping=True)
-    output = tokenizer.decode(summary_ids[0], skip_special_tokens=True)
+def translate_text(text, tokenizer, model, option):
+    prompt = f"translate English to {option}: " + text
+    inputs = tokenizer(prompt, return_tensors="pt").to(device)
+    translation_ids = model.generate(inputs['input_ids'], num_beams=4, no_repeat_ngram_size=2, min_length=30, max_length=100, early_stopping=True)
+    output = tokenizer.decode(translation_ids[0], skip_special_tokens=True)
     return output
 
-# Questions and answers
-def get_questions(text):
-    result = question_generator(text)
+# Generate questions and answers
+def get_questions(text, question_answering):
+    questions = ["What is the main point?", "Can you summarize the topic?", "What is this text about?"]
     st.markdown('**Question Answers:**')
-    for res in result:
-        st.markdown('**' + res['question'] + '**')
-        st.text(res['answer'])
+    for question in questions:
+        answer = question_answering(question=question, context=text)
+        st.markdown(f"**{question}**")
+        st.text(answer['answer'])
 
 def main():
     st.title('HelpMeRead')
@@ -58,20 +59,22 @@ def main():
     Translate = st.button("Translate")
     Summarize = st.button("Summarize")
     QAs = st.button("QAs")
-    load_models()
+    
+    # Load models only once
+    summarizer_tokenizer, summarizer_model, question_answering = load_models()
 
     if Summarize:
-        result = get_summary(message)
+        result = get_summary(message, summarizer_tokenizer, summarizer_model)
         st.markdown('**Summary:**')
         st.write(capitalize_text(result))
 
     if Translate:
-        result = translate_text(message, option)
+        result = translate_text(message, summarizer_tokenizer, summarizer_model, option)
         st.markdown('**Translation:**')
         st.write(result)
 
     if QAs:
-        get_questions(message)
+        get_questions(message, question_answering)
 
 if __name__ == "__main__":
     main()
